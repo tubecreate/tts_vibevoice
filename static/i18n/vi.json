@@ -1,0 +1,19 @@
+{
+    "title": "VibeVoice TTS",
+    "subtitle": "AI Chuyển Văn Bản Thành Giọng Nói • 25 Giọng • Streaming",
+    "input_label": "📝 Văn bản đầu vào",
+    "voice_label": "🎙️ Giọng nói",
+    "cfg_label": "⚙️ Hệ số CFG",
+    "btn_generate": "Tạo Audio",
+    "btn_stream": "Phát Trực Tiếp",
+    "btn_stop": "Dừng",
+    "btn_load_model": "Tải Model",
+    "btn_download": "Tải xuống",
+    "output_label": "🔊 Kết quả",
+    "log_label": "📋 Nhật ký",
+    "placeholder": "Nhập văn bản cần chuyển thành giọng nói...",
+    "status_loading": "Đang tải model...",
+    "status_ready": "Sẵn sàng",
+    "status_generating": "Đang tạo...",
+    "status_error": "Lỗi"
+}

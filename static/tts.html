@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS VibeVoice — Text-to-Speech</title>
+    <meta name="description" content="AI Text-to-Speech: Edge-TTS (Vietnamese, 100+ languages) + VibeVoice AI (offline). Free, streaming.">
+    <link rel="stylesheet" href="/tts-vibevoice-static/tts.css?v=2.3">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-left">
+                <span class="header-icon">🔊</span>
+                <div>
+                    <h1 id="page-title">VibeVoice TTS</h1>
+                    <p class="header-subtitle" id="header-subtitle">Edge-TTS (Vietnamese 🇻🇳) + VibeVoice AI • 100+ Voices</p>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="provider-status-bar" id="providerStatusBar">
+                    <!-- Populated by JS -->
+                </div>
+                <select id="langSelect" class="lang-select" title="Language">
+                    <option value="en">EN</option>
+                    <option value="vi">VI</option>
+                    <option value="zh">ZH</option>
+                </select>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Left Panel: Input -->
+            <div class="panel input-panel">
+                <!-- Input Mode Tabs -->
+                <div class="input-tabs">
+                    <button class="input-tab active" data-mode="text" onclick="switchInputMode('text')">
+                        📝 Text
+                    </button>
+                    <button class="input-tab" data-mode="srt" onclick="switchInputMode('srt')">
+                        📋 SRT File
+                    </button>
+                    <span class="char-count" id="charCount">0 chars</span>
+                </div>
+
+                <!-- Text Input -->
+                <div id="inputModeText">
+                    <textarea
+                        id="textInput"
+                        class="text-input"
+                        placeholder="Enter text to convert to speech..."
+                        rows="10"
+                    ></textarea>
+                </div>
+
+                <!-- SRT Input -->
+                <div id="inputModeSRT" style="display:none">
+                    <div class="srt-upload-area" id="srtDropZone">
+                        <div class="srt-upload-icon">📋</div>
+                        <p>Drag & drop SRT file or <label class="srt-browse" for="srtFileInput">browse</label></p>
+                        <p class="srt-hint">Voice sẽ đọc theo timing SRT, khoảng trống thì mute</p>
+                        <input type="file" id="srtFileInput" accept=".srt,.vtt" style="display:none" onchange="handleSRTFile(event)">
+                    </div>
+                    <textarea
+                        id="srtInput"
+                        class="text-input srt-textarea"
+                        placeholder="1
+00:00:01,000 --> 00:00:04,000
+Xin chào! Đây là dòng phụ đề đầu tiên.
+
+2
+00:00:05,500 --> 00:00:08,000
+Voice sẽ đọc theo timing này."
+                        rows="10"
+                    ></textarea>
+                    <div class="srt-info" id="srtInfo" style="display:none">
+                        <span id="srtSegmentCount">0 segments</span> •
+                        <span id="srtDuration">0:00</span> •
+                        <button class="btn-tiny" onclick="previewSRT()">👁️ Preview</button>
+                    </div>
+                </div>
+
+                <!-- Voice Selection -->
+                <div class="controls-section voice-controls">
+                    <div class="control-group voice-filter-group">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                            <label id="label-voice" style="margin-bottom: 0;">🎙️ Voice</label>
+                            <div style="display:flex; gap: 6px;">
+                                <button class="btn-tiny" onclick="openCloneModal()" style="padding: 2px 8px; font-size: 0.8rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color:white; border-radius: 4px; cursor: pointer;">➕ Clone</button>
+                                <button class="btn-tiny" onclick="openManageModal()" style="padding: 2px 8px; font-size: 0.8rem; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color:white; border-radius: 4px; cursor: pointer;" title="Manage Clone Voices">⚙️</button>
+                            </div>
+                            <input type="file" id="sysCloneInput" accept="audio/wav,audio/mp3,audio/mpeg" style="display:none">
+                        </div>
+
+                        <!-- Filter Bar -->
+                        <div class="voice-filter-bar">
+                            <div class="filter-item">
+                                <label class="filter-label">Provider</label>
+                                <select id="filterProvider" class="filter-select" onchange="applyVoiceFilters()">
+                                    <option value="all">All Providers</option>
+                                </select>
+                            </div>
+                            <div class="filter-item">
+                                <label class="filter-label">Language</label>
+                                <select id="filterLanguage" class="filter-select" onchange="applyVoiceFilters()">
+                                    <option value="all">All Languages</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Engine Install Banner (shown when engine not installed) -->
+                        <div class="engine-install-banner" id="engineInstallBanner" style="display:none">
+                            <span class="install-icon">📦</span>
+                            <span class="install-text" id="installBannerText">This engine requires additional dependencies</span>
+                            <button class="btn-install" id="btnInstallEngine" onclick="installCurrentEngine()">
+                                <span id="installBtnText">Install</span>
+                            </button>
+                        </div>
+
+                        <select id="voiceSelect" class="select-input" onchange="updateVoicePreview()">
+                            <option value="en-Carter_man">Loading voices...</option>
+                        </select>
+                    </div>
+
+
+                    <div class="control-group" id="cfgGroup">
+                        <label id="label-cfg">⚙️ CFG Scale</label>
+                        <div class="slider-container">
+                            <input type="range" id="cfgSlider" min="0.5" max="3.0" step="0.1" value="2.0" class="slider">
+                            <span class="slider-value" id="cfgValue">2.0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="action-buttons">
+                    <button id="btnGenerate" class="btn btn-primary" onclick="generateTTS()">
+                        <span class="btn-icon">🎵</span>
+                        <span id="btn-generate-text">Generate</span>
+                    </button>
+                    <button id="btnStream" class="btn btn-secondary" onclick="streamTTS()">
+                        <span class="btn-icon">⚡</span>
+                        <span id="btn-stream-text">Stream</span>
+                    </button>
+                    <button id="btnStop" class="btn btn-danger" onclick="stopGeneration()" style="display:none">
+                        <span class="btn-icon">⏹️</span>
+                        <span id="btn-stop-text">Stop</span>
+                    </button>
+                    <button id="btnLoadModel" class="btn btn-outline" onclick="loadModel()">
+                        <span class="btn-icon">🔄</span>
+                        <span id="btn-load-text">Load Model</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Right Panel: Output -->
+            <div class="panel output-panel">
+                <div class="panel-header">
+                    <h2 id="label-output">🔊 Output</h2>
+                </div>
+
+                <!-- Progress -->
+                <div class="progress-section" id="progressSection" style="display:none">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <p class="progress-text" id="progressText">Processing...</p>
+                </div>
+
+                <!-- Audio Player -->
+                <div class="audio-section" id="audioSection" style="display:none">
+                    <div class="waveform-container" id="waveformContainer">
+                        <canvas id="waveformCanvas" width="600" height="100"></canvas>
+                    </div>
+                    <audio id="audioPlayer" controls class="audio-player"></audio>
+                    <div class="audio-info" id="audioInfo"></div>
+                    <div class="audio-actions">
+                        <button class="btn btn-small" onclick="downloadAudio()" id="btnDownload">
+                            ⬇️ <span id="btn-download-text">Download</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Streaming Player -->
+                <div class="stream-section" id="streamSection" style="display:none">
+                    <div class="stream-visualizer">
+                        <canvas id="streamCanvas" width="600" height="80"></canvas>
+                    </div>
+                    <div class="stream-info" id="streamInfo">
+                        <span class="stream-dot"></span>
+                        <span id="streamStatus">Connecting...</span>
+                    </div>
+                </div>
+
+                <!-- Voice Preview -->
+                <div class="voice-preview" id="voicePreview">
+                    <div class="preview-card" id="previewCard">
+                        <div class="preview-avatar" id="previewAvatar">🎙️</div>
+                        <div class="preview-info">
+                            <h3 id="previewName">Select a voice</h3>
+                            <p id="previewLang">—</p>
+                            <p id="previewGender">—</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Log -->
+                <div class="log-section">
+                    <h3 id="label-log">📋 Log</h3>
+                    <div class="log-output" id="logOutput">
+                        <div class="log-entry">Ready. Enter text and click Generate or Stream.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    <!-- 1. Clone Voice Modal -->
+    <div id="cloneVoiceModal" class="modal-overlay" onclick="if(event.target===this) closeCloneModal()">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3>🎙️ Tái tạo Giọng (Voice Cloning)</h3>
+                <button class="btn-close" onclick="closeCloneModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="drag-drop-zone" id="cloneDropZone" onclick="document.getElementById('sysCloneInput').click()">
+                    <span class="icon">📥</span>
+                    <p>Kéo thả file âm thanh vào đây hoặc <strong>Bấm để chọn</strong></p>
+                    <p class="hint">Hỗ trợ: .wav, .mp3 (Tốt nhất từ 5-15s, không nhạc nền)</p>
+                    <p class="file-name" id="cloneFileName"></p>
+                </div>
+                
+                <div>
+                    <label style="display:block; margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary)">Tên gợi nhớ (Voice Name)</label>
+                    <input type="text" id="cloneVoiceName" class="input-glow" placeholder="VD: Cô gái Hà Nội 1">
+                </div>
+
+                <div>
+                    <label style="display:block; margin-bottom:8px; font-size:0.85rem; color:var(--text-secondary)">Giới tính</label>
+                    <div class="gender-selector">
+                        <label class="gender-pill active" id="pillMale">
+                            👨 Nam
+                            <input type="radio" name="cloneGender" value="male" checked onchange="updateGenderPill()">
+                        </label>
+                        <label class="gender-pill" id="pillFemale">
+                            👩 Nữ
+                            <input type="radio" name="cloneGender" value="female" onchange="updateGenderPill()">
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeCloneModal()">Huỷ</button>
+                <button class="btn btn-primary" id="btnSubmitClone" onclick="submitCloneVoice()">
+                    <span id="txtSubmitClone">🚀 Upload & Clone</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. Manage Voices Modal -->
+    <div id="manageVoicesModal" class="modal-overlay" onclick="if(event.target===this) closeManageModal()">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3>⚙️ Quản lý Giọng Clone</h3>
+                <button class="btn-close" onclick="closeManageModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="manage-list" id="manageList">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeManageModal()">Xong</button>
+            </div>
+        </div>
+    </div>
+    <!-- 3. Provider Settings Modal -->
+    <div id="providerSettingsModal" class="modal-overlay" onclick="if(event.target===this) closeProviderSettings()">
+        <div class="modal-container prov-settings-modal">
+            <div class="modal-header">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <span id="provSettingsIcon" style="font-size:1.6rem"></span>
+                    <div>
+                        <h3 id="provSettingsTitle">Provider Settings</h3>
+                        <p id="provSettingsSubtitle" style="font-size:0.75rem;color:var(--text-muted);margin-top:2px"></p>
+                    </div>
+                </div>
+                <button class="btn-close" onclick="closeProviderSettings()">×</button>
+            </div>
+            <div class="modal-body">
+                <!-- Status badge -->
+                <div class="prov-status-row" id="provStatusRow">
+                    <span class="prov-status-dot" id="provStatusDot"></span>
+                    <span id="provStatusText" style="font-size:0.82rem;color:var(--text-secondary)"></span>
+                </div>
+
+                <!-- Enable/Disable toggle -->
+                <div class="prov-toggle-row">
+                    <div>
+                        <div style="font-size:0.9rem;font-weight:600;color:var(--text-primary)">Enable Provider</div>
+                        <div id="provToggleHint" style="font-size:0.72rem;color:var(--text-muted);margin-top:3px">When enabled, voices and status will be loaded</div>
+                    </div>
+                    <label class="toggle-switch" id="provToggleLabel">
+                        <input type="checkbox" id="provToggle" onchange="onProviderToggle()">
+                        <span class="toggle-track">
+                            <span class="toggle-thumb"></span>
+                        </span>
+                    </label>
+                </div>
+
+                <!-- Not-installed guide (shown when provider unavailable) -->
+                <div id="provInstallGuide" class="prov-install-guide" style="display:none">
+                    <div class="prov-install-header">
+                        <span style="font-size:1.4rem">📦</span>
+                        <div>
+                            <div style="font-weight:600;font-size:0.88rem" id="provInstallTitle">Provider not installed</div>
+                            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:2px" id="provInstallDesc"></div>
+                        </div>
+                    </div>
+                    <div class="prov-install-steps" id="provInstallSteps"></div>
+                    <div style="display:flex;gap:8px;margin-top:12px" id="provInstallLinks"></div>
+                </div>
+
+                <!-- Details section -->
+                <div class="prov-details" id="provDetails" style="display:none">
+                    <div id="provDetailsContent"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeProviderSettings()">Đóng</button>
+                <button class="btn btn-primary" id="provSaveBtn" onclick="saveProviderSettings()" style="display:none">💾 Lưu</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. API Keys Modal -->
+    <div id="apiKeysModal" class="modal-overlay" onclick="if(event.target===this) closeApiKeysModal()">
+        <div class="modal-container" style="width:420px">
+            <div class="modal-header">
+                <h3 id="apiKeysTitle">🔑 API Keys</h3>
+                <button class="btn-close" onclick="closeApiKeysModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="api-keys-list" id="apiKeysList">
+                    <!-- Populated by JS -->
+                </div>
+                <div class="api-key-add-form">
+                    <div class="control-group" style="gap:6px">
+                        <label class="filter-label">Label</label>
+                        <input type="text" id="newKeyLabel" class="input-glow" placeholder="default" value="default" style="padding:8px 12px; font-size:0.85rem">
+                    </div>
+                    <div class="control-group" style="gap:6px; margin-top:8px">
+                        <label class="filter-label">API Key</label>
+                        <input type="password" id="newKeyValue" class="input-glow" placeholder="Paste your API key here..." style="padding:8px 12px; font-size:0.85rem">
+                    </div>
+                    <button class="btn btn-primary" style="margin-top:10px; width:100%; justify-content:center" onclick="addApiKey()">
+                        ➕ Add Key
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline" onclick="closeApiKeysModal()">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/tts-vibevoice-static/tts.js?v=2.3"></script>
+</body>
+</html>

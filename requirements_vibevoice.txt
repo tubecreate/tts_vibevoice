@@ -1,0 +1,15 @@
+torch
+transformers>=4.51.3,<5.0.0
+accelerate
+diffusers
+librosa
+scipy
+numpy
+pydub
+tqdm
+numba>=0.57.0
+llvmlite>=0.40.0
+ml-collections
+absl-py
+soundfile
+vibevoice @ git+https://github.com/microsoft/VibeVoice.git

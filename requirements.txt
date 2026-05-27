@@ -1,0 +1,5 @@
+# Core (lightweight) dependencies — installed at extension enable time
+# Heavy AI deps (torch, vibevoice, viterbox) are in requirements_vibevoice.txt
+# and installed on-demand when user first uses those engines.
+edge-tts
+python-multipart

@@ -1,0 +1,19 @@
+{
+    "title": "VibeVoice TTS",
+    "subtitle": "AI 文字转语音 • 25种声音 • 实时流式",
+    "input_label": "📝 输入文本",
+    "voice_label": "🎙️ 声音",
+    "cfg_label": "⚙️ CFG 比例",
+    "btn_generate": "生成",
+    "btn_stream": "实时播放",
+    "btn_stop": "停止",
+    "btn_load_model": "加载模型",
+    "btn_download": "下载",
+    "output_label": "🔊 输出",
+    "log_label": "📋 日志",
+    "placeholder": "输入需要转换为语音的文本...",
+    "status_loading": "正在加载模型...",
+    "status_ready": "就绪",
+    "status_generating": "生成中...",
+    "status_error": "错误"
+}

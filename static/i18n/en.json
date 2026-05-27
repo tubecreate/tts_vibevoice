@@ -1,0 +1,19 @@
+{
+    "title": "VibeVoice TTS",
+    "subtitle": "AI Text-to-Speech • 25 Voices • Streaming",
+    "input_label": "📝 Input Text",
+    "voice_label": "🎙️ Voice",
+    "cfg_label": "⚙️ CFG Scale",
+    "btn_generate": "Generate",
+    "btn_stream": "Stream",
+    "btn_stop": "Stop",
+    "btn_load_model": "Load Model",
+    "btn_download": "Download",
+    "output_label": "🔊 Output",
+    "log_label": "📋 Log",
+    "placeholder": "Enter text to convert to speech...",
+    "status_loading": "Loading model...",
+    "status_ready": "Ready",
+    "status_generating": "Generating...",
+    "status_error": "Error"
+}

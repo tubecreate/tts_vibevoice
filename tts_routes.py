@@ -57,6 +57,30 @@ class SynthesizeRequest(BaseModel):
     browser_profile: Optional[str] = None
 
 
+def _find_executable(name: str) -> str:
+    """Find a working ffmpeg or ffprobe executable, avoiding the broken miniconda version."""
+    import os, shutil
+    preferred_dirs = [
+        r"C:\ffmpeg-7.1.1-essentials_build\bin",
+        r"C:\Users\ADMIN\AppData\Local\com.debpalash.omnivoice-studio\tools"
+    ]
+    for d in preferred_dirs:
+        exe_path = os.path.join(d, f"{name}.exe")
+        if os.path.exists(exe_path):
+            return exe_path
+    found = shutil.which(name)
+    if found:
+        if "miniconda3" in found.lower():
+            for path_dir in os.environ.get("PATH", "").split(os.pathsep):
+                if not path_dir or "miniconda3" in path_dir.lower():
+                    continue
+                exe_path = os.path.join(path_dir, f"{name}.exe")
+                if os.path.exists(exe_path):
+                    return exe_path
+        return found
+    return name
+
+
 # ── Helper: get output dir ──
 
 def _get_output_dir():
@@ -296,7 +320,8 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                     for fn in temp_files:
                         f.write(f"file '{fn}'\n")
                 
-                subprocess.check_call(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                ffmpeg_exe = _find_executable("ffmpeg")
+                subprocess.check_call([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
                 # Cleanup
                 try:
@@ -554,7 +579,8 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         for fn in temp_files:
                             f.write(f"file '{fn}'\n")
                     
-                    subprocess.check_call(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    ffmpeg_exe = _find_executable("ffmpeg")
+                    subprocess.check_call([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     
                     result = {
                         "status": "success",
@@ -880,7 +906,7 @@ async def synthesize_srt(body: SRTSynthesizeRequest, background_tasks: Backgroun
             import subprocess
             import shutil
 
-            ffmpeg_path = shutil.which("ffmpeg") or "ffmpeg"
+            ffmpeg_path = _find_executable("ffmpeg")
 
             # Create a silence base track
             silence_path = os.path.join(temp_dir, "silence.mp3")
@@ -980,7 +1006,7 @@ async def _simple_concat_srt(segment_audio, out_dir, task_id):
     import subprocess
     import shutil
 
-    ffmpeg = shutil.which("ffmpeg") or "ffmpeg"
+    ffmpeg = _find_executable("ffmpeg")
     RATE = 44100
 
     # Convert each segment mp3 to wav

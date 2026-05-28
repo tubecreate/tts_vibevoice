@@ -12,7 +12,7 @@ logger = logging.getLogger("TTSVibeVoice")
 
 class TTSVibeVoiceExtension(Extension):
     name = "tts_vibevoice"
-    version = "1.0.0"
+    version = "2026.05.28.162800"
     description = "AI Text-to-Speech — VibeVoice Realtime, 25 voices, streaming"
     author = "TubeCreate"
     extension_type = "external"

@@ -201,40 +201,78 @@ class TTSVibeVoiceExtension(Extension):
         """Register TTS skill for chatbot routing."""
         try:
             from tubecli.core.skill import skill_manager
-            existing = skill_manager.find_by_name("Text-to-Speech (TTS)")
-            if existing:
-                logger.info("TTS skill already registered, skipping.")
-                return
+            from tubecli.config import get_language
 
-            skill_manager.create(
-                name="Text-to-Speech (TTS)",
-                description=(
+            existing = skill_manager.find_by_name("Text-to-Speech (TTS)")
+            lang = get_language()
+
+            if lang == "vi":
+                desc = (
                     "Chuyển văn bản thành giọng nói tự nhiên bằng VibeVoice AI và Viterbox (Tiếng Việt). "
                     "Hỗ trợ 25+ giọng nói (Vietnamese, English, German, French, etc.), "
                     "streaming realtime, tạo audio WAV. "
                     "Có thể dùng để tạo voiceover, narrate script, đọc text."
-                ),
-                skill_type="Extension Skill",
-                commands=[
+                )
+                cmds = [
                     "đọc text", "đọc văn bản", "text to speech", "tts",
                     "tạo giọng nói", "tạo audio", "generate voice", "generate speech",
                     "chuyển text thành giọng", "convert to speech",
                     "narrate", "voiceover", "lồng tiếng", "đọc bài",
-                ],
-                workflow_data={
-                    "extension": "tts_vibevoice",
-                    "action": "generate_tts",
-                    "sop": (
-                        "1. Nhận text cần chuyển thành giọng nói\n"
-                        "2. Chọn voice preset (mặc định: en-Carter_man)\n"
-                        "3. Gọi API POST /api/v1/tts/synthesize\n"
-                        "   Body: {\"text\": \"...\", \"voice\": \"en-Carter_man\", \"engine\": \"vibevoice\"} (engine có thể là edge, vibevoice, viterbox)\n"
-                        "4. Poll status tại GET /api/v1/tts/status/{task_id}\n"
-                        "5. Khi hoàn thành, trả về file WAV"
-                    ),
-                },
-            )
-            logger.info("✅ TTS skill registered successfully.")
+                ]
+                sop = (
+                    "1. Nhận text cần chuyển thành giọng nói\n"
+                    "2. Chọn voice preset (mặc định: en-Carter_man)\n"
+                    "3. Gọi API POST /api/v1/tts/synthesize\n"
+                    "   Body: {\"text\": \"...\", \"voice\": \"en-Carter_man\", \"engine\": \"vibevoice\"} (engine có thể là edge, vibevoice, viterbox)\n"
+                    "4. Poll status tại GET /api/v1/tts/status/{task_id}\n"
+                    "5. Khi hoàn thành, trả về file WAV"
+                )
+            else:
+                desc = (
+                    "Convert text to natural speech using VibeVoice AI and Viterbox (Vietnamese). "
+                    "Supports 25+ voices (Vietnamese, English, German, French, etc.), "
+                    "real-time streaming, WAV audio creation. "
+                    "Can be used for voiceover, narration, reading text."
+                )
+                cmds = [
+                    "read text", "text to speech", "tts",
+                    "generate voice", "generate audio", "generate speech",
+                    "convert to speech", "narrate", "voiceover",
+                ]
+                sop = (
+                    "1. Get the text to convert to speech\n"
+                    "2. Choose a voice preset (default: en-Carter_man)\n"
+                    "3. Call API POST /api/v1/tts/synthesize\n"
+                    "   Body: {\"text\": \"...\", \"voice\": \"en-Carter_man\", \"engine\": \"vibevoice\"} (engine can be edge, vibevoice, viterbox)\n"
+                    "4. Poll status at GET /api/v1/tts/status/{task_id}\n"
+                    "5. On completion, return the WAV file"
+                )
+
+            if not existing:
+                skill_manager.create(
+                    name="Text-to-Speech (TTS)",
+                    description=desc,
+                    skill_type="Extension Skill",
+                    commands=cmds,
+                    workflow_data={
+                        "extension": "tts_vibevoice",
+                        "action": "generate_tts",
+                        "sop": sop,
+                    },
+                )
+                logger.info("✅ TTS skill registered successfully.")
+            else:
+                skill_manager.update(
+                    existing.id,
+                    description=desc,
+                    commands=cmds,
+                    workflow_data={
+                        "extension": "tts_vibevoice",
+                        "action": "generate_tts",
+                        "sop": sop,
+                    },
+                )
+                logger.info("⚡ TTS skill updated/synced.")
         except Exception as e:
             logger.warning(f"Could not register TTS skill: {e}")
 

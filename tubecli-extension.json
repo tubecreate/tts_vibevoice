@@ -1,40 +1,53 @@
 {
-    "name":  "tts_vibevoice",
-    "display_name":  "TTS VibeVoice",
-    "version":  "2026.05.28.162800",
-    "description":  "AI Text-to-Speech — Edge-TTS (Vietnamese 🇻🇳) + VibeVoice AI, 100+ voices, SRT voice track, provider enable/disable settings",
-    "author":  "TubeCreate",
-    "entry":  "extension.py",
-    "extension_class":  "TTSVibeVoiceExtension",
-    "icon":  "🔊",
-    "dependencies":  [
-                         "edge-tts",
-                         "python-multipart"
-                     ],
+    "name": "tts_vibevoice",
+    "display_name": "TTS VibeVoice",
+    "version": "2026.09.06.235000",
+    "description": "AI Text-to-Speech — Edge-TTS (Vietnamese 🇻🇳) + VibeVoice AI, 100+ voices, SRT voice track, provider enable/disable settings",
+    "author": "TubeCreate",
+    "entry": "extension.py",
+    "extension_class": "TTSVibeVoiceExtension",
+    "icon": "record_voice_over",
+    "dependencies": [
+        "edge-tts",
+        "python-multipart"
+    ],
     "exclude_auto_deps": [
-        "torch", "transformers", "accelerate", "diffusers",
-        "librosa", "scipy", "numpy", "pydub", "tqdm",
-        "numba", "llvmlite", "ml-collections", "absl-py",
-        "soundfile", "vibevoice", "einops", "soe_vinorm",
+        "torch",
+        "transformers",
+        "accelerate",
+        "diffusers",
+        "librosa",
+        "scipy",
+        "numpy",
+        "pydub",
+        "tqdm",
+        "numba",
+        "llvmlite",
+        "ml-collections",
+        "absl-py",
+        "soundfile",
+        "vibevoice",
+        "einops",
+        "soe_vinorm",
         "viterbox"
     ],
     "heavy_deps_file": "requirements_vibevoice.txt",
-    "nodes":  [
-                  "tts_generate"
-              ],
-    "skill_md":  "SKILL.md",
-    "ui_static":  "static",
-    "api_prefix":  "/api/v1/tts",
-    "page_url":  "/tts-vibevoice",
-    "min_tubecli_version":  "0.3.0",
-    "category":  "extension",
-    "tags":  [
-                 "tts",
-                 "text-to-speech",
-                 "vibevoice",
-                 "voice",
-                 "audio",
-                 "giọng nói"
-             ],
-    "license":  "MIT"
+    "nodes": [
+        "tts_generate"
+    ],
+    "skill_md": "SKILL.md",
+    "ui_static": "static",
+    "api_prefix": "/api/v1/tts",
+    "page_url": "/tts-vibevoice",
+    "min_tubecli_version": "0.3.0",
+    "category": "extension",
+    "tags": [
+        "tts",
+        "text-to-speech",
+        "vibevoice",
+        "voice",
+        "audio",
+        "giọng nói"
+    ],
+    "license": "MIT"
 }

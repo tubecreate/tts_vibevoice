@@ -246,8 +246,40 @@ async def _edge_tts_synthesize(text: str, voice: str, output_path: str) -> dict:
 
     start_time = time.time()
 
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output_path)
+    # stream() thay cho save(): cùng dữ liệu mp3, nhưng có thêm sự kiện
+    # WordBoundary — mốc bắt đầu/kết thúc từng TỪ do chính engine trả về.
+    # Content Studio đốt phụ đề chạy theo giọng bằng những mốc này (sidecar
+    # <mp3>.words.json); không có thì nó phải ước lượng và không tô từ đang đọc.
+    TICKS = 10_000_000
+    audio = bytearray()
+    words = []
+    last_err = None
+    for attempt in range(3):
+        if attempt:
+            await asyncio.sleep(2 * attempt)      # edge hay chặn tốc độ ("No audio was received")
+        audio.clear(); words.clear()
+        try:
+            try:
+                # edge-tts >= 7 mặc định chỉ gửi SentenceBoundary; phải xin WordBoundary.
+                communicate = edge_tts.Communicate(text, voice, boundary="WordBoundary")
+            except TypeError:                     # bản 6.x không có tham số boundary, mặc định đã là từ
+                communicate = edge_tts.Communicate(text, voice)
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio.extend(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    start = chunk["offset"] / TICKS
+                    words.append({"word": chunk["text"], "start": round(start, 3),
+                                  "end": round(start + chunk["duration"] / TICKS, 3)})
+            if audio:
+                break
+            last_err = "no audio received"
+        except Exception as e:
+            last_err = e
+    if not audio:
+        raise RuntimeError(f"edge-tts returned no audio for voice {voice}: {last_err}")
+    with open(output_path, "wb") as f:
+        f.write(bytes(audio))
 
     gen_time = time.time() - start_time
     file_size = os.path.getsize(output_path)
@@ -264,7 +296,30 @@ async def _edge_tts_synthesize(text: str, voice: str, output_path: str) -> dict:
         "generation_time": round(gen_time, 2),
         "rtf": round(gen_time / max(duration, 0.1), 2),
         "size": file_size,
+        "words": words,
     }
+
+
+def _media_seconds(path: str) -> float:
+    """Thời lượng thật của một file bằng ffprobe (0 nếu không đo được)."""
+    import subprocess
+    try:
+        out = subprocess.run([_find_executable("ffprobe"), "-v", "error", "-show_entries", "format=duration",
+                              "-of", "csv=p=0", path], capture_output=True, text=True, timeout=30)
+        return float((out.stdout or "0").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def write_words_sidecar(output_path: str, words: list, engine: str = "edge") -> str:
+    """Ghi mốc từ cạnh mp3: <mp3>.words.json — chép mp3 đi đâu mốc theo đó."""
+    import json as _json
+    if not words:
+        return ""
+    p = output_path + ".words.json"
+    with open(p, "w", encoding="utf-8") as f:
+        _json.dump({"engine": engine, "words": words}, f, ensure_ascii=False)
+    return p
 
 
 # ═══════════════════════════════════════════════════
@@ -286,43 +341,54 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
             try:
                 import re, tempfile
                 import subprocess
-                
+
                 output_path = body.output_path or os.path.join(
                     _get_output_dir(), f"tts_{task_id}.mp3"
                 )
-                
+
                 # Split text into sentences for reliable progress tracking
                 text = body.text.replace('\n', ' ')
                 chunks = [s.strip() for s in re.split(r'(?<=[.!?]) +(?=[A-Z0-9À-Ỹa-z])', text) if s.strip()]
                 if not chunks: chunks = [text]
-                
+
                 temp_dir = tempfile.mkdtemp()
                 temp_files = []
-                
+                all_words = []
+                offset = 0.0
+
                 for i, chunk in enumerate(chunks):
                     _tasks[task_id]["progress"] = int((i / len(chunks)) * 90)
                     tmp_out = os.path.join(temp_dir, f"chunk_{i}.mp3")
-                    
+
                     # Synthesize chunk
                     res = await _edge_tts_synthesize(chunk, body.voice, tmp_out)
                     if os.path.exists(tmp_out):
                         temp_files.append(tmp_out)
-                
+                        # Mốc của đoạn sau phải cộng dồn độ dài THẬT các đoạn trước
+                        # (đo bằng ffprobe; đoạn concat nối đúng bằng chừng ấy) —
+                        # không thì phụ đề đoạn 2 trở đi chạy lại từ giây 0.
+                        for w in res.get("words") or []:
+                            all_words.append({"word": w["word"], "start": round(w["start"] + offset, 3),
+                                              "end": round(w["end"] + offset, 3)})
+                        measured = _media_seconds(tmp_out)
+                        offset += measured if measured > 0 else (
+                            (res.get("words") or [{"end": 0}])[-1]["end"] + 0.1)
+
                 if not temp_files:
                     raise Exception("All Edge-TTS chunks failed.")
-                
+
                 _tasks[task_id]["status"] = "stitching"
                 _tasks[task_id]["progress"] = 95
-                
+
                 # Concat using ffmpeg concat demuxer
                 list_path = os.path.join(temp_dir, "list.txt")
                 with open(list_path, "w", encoding="utf-8") as f:
                     for fn in temp_files:
                         f.write(f"file '{fn}'\n")
-                
+
                 ffmpeg_exe = _find_executable("ffmpeg")
                 subprocess.check_call([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
+
                 # Cleanup
                 try:
                     for fn in temp_files:
@@ -330,17 +396,20 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                     os.remove(list_path)
                     os.rmdir(temp_dir)
                 except: pass
-                
+
+                words_file = write_words_sidecar(output_path, all_words, "edge")
                 # Build dummy result dict like _edge_tts_synthesize to satisfy frontend check
                 result = {
                     "status": "success",
                     "engine": "edge-tts",
                     "voice": body.voice,
                     "output": output_path,
-                    "duration": 0,
-                    "size": os.path.getsize(output_path)
+                    "duration": round(offset, 2),
+                    "size": os.path.getsize(output_path),
+                    "words": len(all_words),
+                    "words_file": words_file,
                 }
-                
+
                 _tasks[task_id]["progress"] = 100
                 _tasks[task_id]["status"] = "success"
                 _tasks[task_id]["result"] = result
@@ -358,15 +427,15 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                 output_path = body.output_path or os.path.join(
                     _get_output_dir(), f"tts_{task_id}.wav"
                 )
-                
+
                 # Write text to temp file
                 text_file = os.path.join(_get_output_dir(), f"temp_text_{task_id}.txt")
                 with open(text_file, "w", encoding="utf-8") as f:
                     f.write(body.text)
-                
+
                 _tasks[task_id]["status"] = "processing"
                 _tasks[task_id]["progress"] = 10
-                
+
                 script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "engines", "gemini_tts.js")
                 # Use browser_profile from request or fallback to first available
                 profile = getattr(body, 'browser_profile', None)
@@ -381,36 +450,36 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                                 profile = sorted(profiles)[0]
                     except Exception as e:
                         logger.error(f"Failed to get browser profiles: {e}")
-                
+
                 cmd = ["node", script_path, "--text-file", text_file, "--voice", body.voice, "--output", output_path, "--profile", profile]
-                
+
                 from pathlib import Path
                 tubecli_root = Path(__file__).resolve().parent.parent.parent.parent
                 browser_ext_dir = tubecli_root / "tubecli" / "extensions" / "browser"
-                
+
                 env = os.environ.copy()
                 env["NODE_PATH"] = str(browser_ext_dir / "node_modules")
-                
+
                 _tasks[task_id]["progress"] = 30
                 # We use subprocess.Popen to capture output and wait
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=str(browser_ext_dir))
-                
+
                 # Poll progress (mock progress for now)
                 for _ in range(60):
                     if proc.poll() is not None:
                         break
                     _tasks[task_id]["progress"] = min(90, _tasks[task_id]["progress"] + 1)
                     await asyncio.sleep(2)
-                
+
                 stdout, stderr = proc.communicate()
-                
+
                 # Cleanup text file
                 try: os.remove(text_file)
                 except: pass
-                
+
                 if proc.returncode != 0:
                     raise Exception(f"Gemini TTS failed: {stderr}")
-                
+
                 # Parse output json if possible
                 try:
                     out_data = json.loads(stdout.strip())
@@ -418,10 +487,10 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         raise Exception(out_data.get("message", "Unknown error in JS script"))
                 except json.JSONDecodeError:
                     pass
-                
+
                 if not os.path.exists(output_path):
                     raise Exception("Output file was not created by Gemini script")
-                
+
                 _tasks[task_id]["progress"] = 100
                 _tasks[task_id]["status"] = "success"
                 _tasks[task_id]["result"] = {
@@ -448,10 +517,10 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                 )
                 _tasks[task_id]["status"] = "loading_model"
                 engine.load_model()
-                
+
                 if not engine.is_loaded:
                     raise Exception(f"Model failed to load: {engine.load_error or 'Unknown Error'}")
-                
+
                 # Split text into chunks primarily by paragraphs to preserve natural prosody.
                 # Only split by sentences if a paragraph is extremely long to prevent GPU OOM.
                 import re, wave, tempfile
@@ -466,12 +535,12 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         sub_chunks = [s.strip() for s in re.split(r'(?<=[.!?]) +(?=[A-Z0-9À-Ỹa-z])', p) if s.strip()]
                         chunks.extend(sub_chunks)
                 if not chunks: chunks = [body.text]
-                
+
                 _tasks[task_id]["status"] = "processing"
                 temp_dir = tempfile.mkdtemp()
                 temp_files = []
                 total_duration = 0
-                
+
                 try:
                     for i, chunk in enumerate(chunks):
                         _tasks[task_id]["progress"] = int((i / len(chunks)) * 90)
@@ -480,13 +549,13 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         if res.get("status") == "success" and os.path.exists(tmp_out):
                             temp_files.append(tmp_out)
                             total_duration += res.get("duration", 0)
-                    
+
                     if not temp_files:
                         raise Exception("All Viterbox chunks failed to generate.")
-                        
+
                     _tasks[task_id]["status"] = "stitching"
                     _tasks[task_id]["progress"] = 95
-                    
+
                     # Concat wavs
                     data = []
                     params = None
@@ -494,7 +563,7 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         with wave.open(f, 'rb') as w:
                             if not params: params = w.getparams()
                             data.append(w.readframes(w.getnframes()))
-                    
+
                     if params and len(data) > 1:
                         # 400ms silence block between paragraphs
                         silence_frames = int(params.framerate * 0.4)
@@ -509,7 +578,7 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                     with wave.open(output_path, 'wb') as w:
                         w.setparams(params)
                         for d in data: w.writeframes(d)
-                        
+
                     result = {
                         "status": "success",
                         "output": output_path,
@@ -537,7 +606,7 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                 output_path = body.output_path or os.path.join(
                     _get_output_dir(), f"tts_{task_id}.mp3"
                 )
-                
+
                 # Split text into chunks primarily by paragraphs
                 import re, tempfile
                 chunks = []
@@ -550,12 +619,12 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         sub_chunks = [s.strip() for s in re.split(r'(?<=[.!?]) +(?=[A-Z0-9À-Ỹa-z])', p) if s.strip()]
                         chunks.extend(sub_chunks)
                 if not chunks: chunks = [body.text]
-                
+
                 _tasks[task_id]["status"] = "processing"
                 temp_dir = tempfile.mkdtemp()
                 temp_files = []
                 total_duration = 0
-                
+
                 try:
                     for i, chunk in enumerate(chunks):
                         _tasks[task_id]["progress"] = int((i / len(chunks)) * 90)
@@ -565,23 +634,23 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                             temp_files.append(tmp_out)
                             # Estimate duration from mp3 size (128kbps = 16KB/s)
                             total_duration += os.path.getsize(tmp_out) / 16000.0
-                    
+
                     if not temp_files:
                         raise Exception("All EverAI chunks failed to generate.")
-                        
+
                     _tasks[task_id]["status"] = "stitching"
                     _tasks[task_id]["progress"] = 95
-                    
+
                     # Concat using ffmpeg concat demuxer
                     import subprocess
                     list_path = os.path.join(temp_dir, "list.txt")
                     with open(list_path, "w", encoding="utf-8") as f:
                         for fn in temp_files:
                             f.write(f"file '{fn}'\n")
-                    
+
                     ffmpeg_exe = _find_executable("ffmpeg")
                     subprocess.check_call([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    
+
                     result = {
                         "status": "success",
                         "output": output_path,
@@ -593,7 +662,7 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                 finally:
                     import shutil as _sh
                     _sh.rmtree(temp_dir, ignore_errors=True)
-                    
+
                 _tasks[task_id]["status"] = result.get("status", "error")
                 _tasks[task_id]["result"] = result
             except Exception as e:
@@ -612,7 +681,7 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                 )
                 _tasks[task_id]["status"] = "processing"
                 _tasks[task_id]["progress"] = 30
-                
+
                 res = await engine.synthesize_async(
                     text=body.text,
                     voice=body.voice,
@@ -641,7 +710,7 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                 )
                 _tasks[task_id]["status"] = "loading_model"
                 engine.load_model()
-                
+
                 # Split text into chunks primarily by paragraphs to preserve natural prosody.
                 # Only split by sentences if a paragraph is extremely long to prevent GPU OOM.
                 import re, wave, tempfile
@@ -655,12 +724,12 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         sub_chunks = [s.strip() for s in re.split(r'(?<=[.!?]) +(?=[A-Z0-9À-Ỹa-z])', p) if s.strip()]
                         chunks.extend(sub_chunks)
                 if not chunks: chunks = [body.text]
-                
+
                 _tasks[task_id]["status"] = "processing"
                 temp_dir = tempfile.mkdtemp()
                 temp_files = []
                 total_duration = 0
-                
+
                 try:
                     for i, chunk in enumerate(chunks):
                         _tasks[task_id]["progress"] = int((i / len(chunks)) * 90)
@@ -669,13 +738,13 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         if res.get("status") == "success" and os.path.exists(tmp_out):
                             temp_files.append(tmp_out)
                             total_duration += res.get("duration", 0)
-                    
+
                     if not temp_files:
                         raise Exception("All chunks failed to generate.")
-                        
+
                     _tasks[task_id]["status"] = "stitching"
                     _tasks[task_id]["progress"] = 95
-                    
+
                     # Concat wavs
                     data = []
                     params = None
@@ -683,7 +752,7 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         with wave.open(f, 'rb') as w:
                             if not params: params = w.getparams()
                             data.append(w.readframes(w.getnframes()))
-                    
+
                     if params and len(data) > 1:
                         # 400ms silence block between paragraphs
                         silence_frames = int(params.framerate * 0.4)
@@ -698,7 +767,7 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                     with wave.open(output_path, 'wb') as w:
                         w.setparams(params)
                         for d in data: w.writeframes(d)
-                        
+
                     result = {
                         "status": "success",
                         "output": output_path,
@@ -1184,12 +1253,12 @@ async def load_model(body: dict, background_tasks: BackgroundTasks):
     """Trigger model loading (preload before first synthesis). Supports engine parameter."""
     try:
         engine_name = body.get("engine", "vibevoice")
-        
+
         if engine_name == "viterbox":
             engine = _get_viterbox_engine()
         else:
             engine = _get_vibevoice_engine()
-            
+
         if engine.is_loaded:
             return {"success": True, "message": "Model already loaded"}
         if engine.is_loading:
@@ -1218,7 +1287,7 @@ async def upload_voice(
         # Save to viterbox wavs directory
         save_dir = r"C:\tubecreate-vue\viterbox-tts-main\wavs"
         os.makedirs(save_dir, exist_ok=True)
-        
+
         # generate a unique filename incorporating gender and name
         import uuid, re
         safe_name = re.sub(r'[^a-zA-Z0-9_]', '', voice_name.replace(' ', '_'))
@@ -1247,10 +1316,10 @@ async def delete_voice(voice_id: str):
     """Delete a cloned voice by ID."""
     if not voice_id.startswith("clone_"):
         return JSONResponse(status_code=400, content={"success": False, "message": "Cannot delete default generic voices."})
-    
+
     save_dir = r"C:\tubecreate-vue\viterbox-tts-main\wavs"
     file_path = os.path.join(save_dir, f"{voice_id}.wav")
-    
+
     if os.path.exists(file_path):
         try:
             os.remove(file_path)
@@ -1271,25 +1340,25 @@ async def update_voice(voice_id: str, req: UpdateVoiceRequest):
     """Rename a cloned voice by updating the attributes packed in filename."""
     if not voice_id.startswith("clone_"):
         return JSONResponse(status_code=400, content={"success": False, "message": "Cannot edit default generic voices."})
-        
+
     save_dir = r"C:\tubecreate-vue\viterbox-tts-main\wavs"
     old_file_path = os.path.join(save_dir, f"{voice_id}.wav")
-    
+
     if not os.path.exists(old_file_path):
         return JSONResponse(status_code=404, content={"success": False, "message": "Voice not found."})
-        
+
     parts = voice_id.split('_')
     if len(parts) >= 4:
         uuid_part = parts[-1]
     else:
         import uuid
         uuid_part = uuid.uuid4().hex[:6]
-        
+
     import re
     safe_name = re.sub(r'[^a-zA-Z0-9_]', '', req.new_name.replace(' ', '_'))
     new_id = f"clone_{req.gender}_{safe_name}_{uuid_part}"
     new_file_path = os.path.join(save_dir, f"{new_id}.wav")
-    
+
     try:
         os.rename(old_file_path, new_file_path)
         engine = _get_viterbox_engine()

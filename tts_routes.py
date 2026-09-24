@@ -55,6 +55,7 @@ class SynthesizeRequest(BaseModel):
     cfg_scale: float = 2.0
     output_path: Optional[str] = None
     browser_profile: Optional[str] = None
+    language: Optional[str] = None   # OmniVoice: «Vietnamese»… — trống thì engine đoán theo chữ
 
 
 def _find_executable(name: str) -> str:
@@ -641,15 +642,22 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                     _tasks[task_id]["status"] = "stitching"
                     _tasks[task_id]["progress"] = 95
 
-                    # Concat using ffmpeg concat demuxer
-                    import subprocess
-                    list_path = os.path.join(temp_dir, "list.txt")
-                    with open(list_path, "w", encoding="utf-8") as f:
-                        for fn in temp_files:
-                            f.write(f"file '{fn}'\n")
+                    if len(temp_files) == 1:
+                        # Một đoạn (mọi nhịp của Content Studio) ⇒ chuyển thẳng file. ffmpeg ở đây là check_call CHẶN vòng
+                        # sự kiện — khi Studio đọc 4 nhịp song song, mỗi lần ghép vô ích làm cả 4 nhịp đứng chờ.
+                        import shutil as _mv
+                        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                        _mv.move(temp_files[0], output_path)
+                    else:
+                        # Concat using ffmpeg concat demuxer
+                        import subprocess
+                        list_path = os.path.join(temp_dir, "list.txt")
+                        with open(list_path, "w", encoding="utf-8") as f:
+                            for fn in temp_files:
+                                f.write(f"file '{fn}'\n")
 
-                    ffmpeg_exe = _find_executable("ffmpeg")
-                    subprocess.check_call([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        ffmpeg_exe = _find_executable("ffmpeg")
+                        await asyncio.to_thread(subprocess.check_call, [ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
                     result = {
                         "status": "success",
@@ -686,7 +694,8 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                     text=body.text,
                     voice=body.voice,
                     output_path=output_path,
-                    cfg_scale=body.cfg_scale
+                    cfg_scale=body.cfg_scale,
+                    language=body.language
                 )
                 if res.get("status") == "success" and os.path.exists(output_path):
                     _tasks[task_id]["progress"] = 100

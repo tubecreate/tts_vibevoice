@@ -1,7 +1,7 @@
 {
     "name": "tts_vibevoice",
     "display_name": "TTS VibeVoice",
-    "version": "2026.09.06.235000",
+    "version": "2026.09.25.062538",
     "description": "AI Text-to-Speech — Edge-TTS (Vietnamese 🇻🇳) + VibeVoice AI, 100+ voices, SRT voice track, provider enable/disable settings",
     "author": "TubeCreate",
     "entry": "extension.py",

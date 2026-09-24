@@ -44,6 +44,13 @@ EVERAI_VOICES = [
     {"id": "es_female_elana_default", "name": "Elena (EverAI ES)", "language": "es", "gender": "female", "desc": "Spanish"},
 ]
 
+EVERAI_DONE = {"done", "completed", "success", "hoàn thành"}
+EVERAI_FAILED = {"error", "failed", "lỗi", "thất bại"}
+# Hỏi trạng thái mỗi 0,8 s: EverAI xong một nhịp sau ~1–4 s, hỏi 2 s một lần thì mỗi nhịp mất trắng tới 2 s (24/9/2026).
+EVERAI_POLL_S = 0.8
+EVERAI_WAIT_S = 300
+
+
 def get_engine():
     return EverAITTSEngine()
 
@@ -103,23 +110,26 @@ class EverAITTSEngine:
             
             # 2. Poll for completion
             audio_link = None
-            max_attempts = 150 # 5 minutes timeout
-            
+            max_attempts = int(EVERAI_WAIT_S / EVERAI_POLL_S)
+
             for attempt in range(max_attempts):
                 import asyncio
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(EVERAI_POLL_S)
                 
                 poll_resp = await client.get(f"{self.api_base}/{request_id}", headers=headers)
                 if poll_resp.status_code == 200:
                     poll_data = poll_resp.json()
-                    status = poll_data.get("result", {}).get("status")
-                    if status == "done":
-                        audio_link = poll_data["result"]["audio_link"]
+                    res = poll_data.get("result", {}) or {}
+                    # EverAI trả trạng thái bằng TIẾNG VIỆT: «mới» → «hoàn thành» (đo 24/9/2026). Bản cũ chỉ chờ "done"
+                    # nên giọng đã xong sau 4 s mà engine vẫn đợi đủ 5 phút rồi báo hết giờ.
+                    status = str(res.get("status") or "").strip().lower()
+                    if status in EVERAI_DONE or (res.get("audio_link") and float(res.get("progress") or 0) >= 100):
+                        audio_link = res.get("audio_link")
                         break
-                    elif status == "error" or status == "failed":
+                    elif status in EVERAI_FAILED:
                         raise Exception(f"EverAI task failed: {poll_data}")
             else:
-                raise Exception(f"EverAI Task timed out after {max_attempts * 2}s")
+                raise Exception(f"EverAI Task timed out after {EVERAI_WAIT_S}s")
                 
             if not audio_link:
                 raise Exception("EverAI returned success but no audio_link")

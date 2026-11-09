@@ -153,14 +153,18 @@ async def engine_status():
     except Exception:
         ext = None
 
-    engines = {}
-    for eng_name in ["edge", "everai", "gemini", "vibevoice", "viterbox", "omnivoice"]:
-        if ext:
-            info = ext.check_provider_available(eng_name)
-            engines[eng_name] = info
-        else:
-            engines[eng_name] = {"available": eng_name in ("edge", "everai", "gemini", "omnivoice"), "engine": eng_name, "details": ""}
+    def _collect() -> dict:
+        engines = {}
+        for eng_name in ["edge", "everai", "gemini", "vibevoice", "viterbox", "omnivoice"]:
+            if ext:
+                engines[eng_name] = ext.check_provider_available(eng_name)
+            else:
+                engines[eng_name] = {"available": eng_name in ("edge", "everai", "gemini", "omnivoice"),
+                                     "engine": eng_name, "details": ""}
+        return engines
 
+    # Ở luồng phụ: kiểm OmniVoice gọi HTTP đồng bộ, VibeVoice nạp torch — trên vòng sự kiện chúng làm cả server đứng.
+    engines = await asyncio.to_thread(_collect)
     return {"success": True, "engines": engines}
 
 

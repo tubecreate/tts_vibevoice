@@ -25,6 +25,7 @@ EVERAI_VOICES = [
     {"id": "vi_female_halinh_mb", "name": "Hà Linh (EverAI)", "language": "vi", "gender": "female", "desc": "Miền Bắc"},
     {"id": "vi_female_hoaian_mb", "name": "Hoài An (EverAI)", "language": "vi", "gender": "female", "desc": "Miền Bắc"},
     {"id": "vi_female_khanhhuyentvc_mb", "name": "Khánh Huyền (EverAI)", "language": "vi", "gender": "female", "desc": "Miền Bắc"},
+    {"id": "voice-4ccae451-76a6-433b", "name": "Nam Toán (EverAI)", "language": "vi", "gender": "male", "desc": "Giọng đọc bài Toán"},
     
     # English
     {"id": "en_male_echo_default", "name": "Echo (EverAI EN)", "language": "en", "gender": "male", "desc": "American"},

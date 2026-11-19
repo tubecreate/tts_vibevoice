@@ -79,7 +79,74 @@ def _find_executable(name: str) -> str:
                 if os.path.exists(exe_path):
                     return exe_path
         return found
+    # Máy không có ffmpeg trên PATH (VPS mới, 19/11/2026: Edge báo «[WinError 2] The system cannot find the file
+    # specified»): hỏi bộ dò của lõi TubeCLI, rồi imageio-ffmpeg (tự cài một lần — gói chỉ có ffmpeg, KHÔNG có ffprobe).
+    try:
+        from tubecli.extensions.video_studio import ffmpeg_utils as _fu
+        got = _fu.find_ffmpeg() if name == "ffmpeg" else _fu.find_ffprobe()
+        if got:
+            return got
+    except Exception:
+        pass
+    if name == "ffmpeg":
+        got = _imageio_ffmpeg()
+        if got:
+            return got
     return name
+
+
+_IMAGEIO_TRIED = {"done": False}
+
+
+def _imageio_ffmpeg() -> str:
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        if _IMAGEIO_TRIED["done"]:
+            return ""
+        _IMAGEIO_TRIED["done"] = True
+        try:
+            import subprocess, sys
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "imageio-ffmpeg", "-q"], timeout=300)
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return ""
+    except Exception:
+        return ""
+
+
+def _have_exe(path: str) -> bool:
+    import os
+    return bool(path) and os.path.isabs(path) and os.path.exists(path)
+
+
+def join_mp3(files: list, output_path: str) -> None:
+    """Nối các đoạn mp3 thành một file. Một đoạn ⇒ chuyển thẳng. Có ffmpeg ⇒ concat demuxer (-c copy).
+    KHÔNG có ffmpeg ⇒ nối thẳng byte: mp3 là chuỗi khung độc lập, các đoạn cùng giọng / cùng bitrate nối lại phát
+    bình thường (chỉ thẻ ID3 của đoạn sau nằm giữa file — trình phát bỏ qua)."""
+    import os, shutil, subprocess, tempfile
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    if len(files) == 1:
+        shutil.move(files[0], output_path)
+        return
+    ffmpeg_exe = _find_executable("ffmpeg")
+    if _have_exe(ffmpeg_exe) or shutil.which(ffmpeg_exe):
+        list_path = os.path.join(tempfile.mkdtemp(), "list.txt")
+        with open(list_path, "w", encoding="utf-8") as f:
+            for fn in files:
+                f.write(f"file '{fn}'\n")
+        try:
+            subprocess.check_call([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy",
+                                   output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except Exception:
+            pass                                       # ffmpeg hỏng ⇒ nối byte bên dưới
+    with open(output_path, "wb") as out:
+        for fn in files:
+            with open(fn, "rb") as f:
+                shutil.copyfileobj(f, out)
 
 
 # ── Helper: get output dir ──
@@ -259,14 +326,19 @@ async def _edge_tts_synthesize(text: str, voice: str, output_path: str) -> dict:
     audio = bytearray()
     words = []
     last_err = None
-    for attempt in range(3):
+    word_marks = True
+    for attempt in range(4):
         if attempt:
-            await asyncio.sleep(2 * attempt)      # edge hay chặn tốc độ ("No audio was received")
+            await asyncio.sleep(2 * attempt if word_marks else 1)   # edge hay chặn tốc độ ("No audio was received")
         audio.clear(); words.clear()
         try:
             try:
                 # edge-tts >= 7 mặc định chỉ gửi SentenceBoundary; phải xin WordBoundary.
-                communicate = edge_tts.Communicate(text, voice, boundary="WordBoundary")
+                # 19/11/2026: dịch vụ Edge trả «No audio was received» cho MỌI câu > 1–2 từ khi xin WordBoundary
+                # (edge-tts 7.3.1, giọng vi-VN) — lần 1 hỏng ⇒ các lần sau gọi mặc định: có tiếng, mất mốc từng từ
+                # (Content Studio tự ước lượng phụ đề).
+                communicate = (edge_tts.Communicate(text, voice, boundary="WordBoundary") if word_marks
+                               else edge_tts.Communicate(text, voice))
             except TypeError:                     # bản 6.x không có tham số boundary, mặc định đã là từ
                 communicate = edge_tts.Communicate(text, voice)
             async for chunk in communicate.stream():
@@ -281,6 +353,8 @@ async def _edge_tts_synthesize(text: str, voice: str, output_path: str) -> dict:
             last_err = "no audio received"
         except Exception as e:
             last_err = e
+        if word_marks and "No audio" in str(last_err):
+            word_marks = False
     if not audio:
         raise RuntimeError(f"edge-tts returned no audio for voice {voice}: {last_err}")
     with open(output_path, "wb") as f:
@@ -306,12 +380,18 @@ async def _edge_tts_synthesize(text: str, voice: str, output_path: str) -> dict:
 
 
 def _media_seconds(path: str) -> float:
-    """Thời lượng thật của một file bằng ffprobe (0 nếu không đo được)."""
+    """Thời lượng thật của một file bằng ffprobe (0 nếu không đo được). Máy thiếu ffprobe ⇒ hàm đo của lõi
+    (hỏi chính ffmpeg «Duration:»)."""
     import subprocess
     try:
         out = subprocess.run([_find_executable("ffprobe"), "-v", "error", "-show_entries", "format=duration",
                               "-of", "csv=p=0", path], capture_output=True, text=True, timeout=30)
         return float((out.stdout or "0").strip() or 0)
+    except Exception:
+        pass
+    try:
+        from tubecli.extensions.video_studio import ffmpeg_utils as _fu
+        return float(_fu.media_duration(path) or 0)
     except Exception:
         return 0.0
 
@@ -385,22 +465,12 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                 _tasks[task_id]["status"] = "stitching"
                 _tasks[task_id]["progress"] = 95
 
-                # Concat using ffmpeg concat demuxer
-                list_path = os.path.join(temp_dir, "list.txt")
-                with open(list_path, "w", encoding="utf-8") as f:
-                    for fn in temp_files:
-                        f.write(f"file '{fn}'\n")
+                # Nối các đoạn — một đoạn chuyển thẳng; máy không có ffmpeg vẫn nối được (join_mp3)
+                await asyncio.to_thread(join_mp3, temp_files, output_path)
 
-                ffmpeg_exe = _find_executable("ffmpeg")
-                subprocess.check_call([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-                # Cleanup
-                try:
-                    for fn in temp_files:
-                        os.remove(fn)
-                    os.remove(list_path)
-                    os.rmdir(temp_dir)
-                except: pass
+                # Cleanup — cả thư mục tạm (các đoạn còn lại + list.txt nếu có)
+                import shutil as _sh
+                _sh.rmtree(temp_dir, ignore_errors=True)
 
                 words_file = write_words_sidecar(output_path, all_words, "edge")
                 # Build dummy result dict like _edge_tts_synthesize to satisfy frontend check
@@ -653,15 +723,7 @@ async def synthesize(body: SynthesizeRequest, background_tasks: BackgroundTasks)
                         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
                         _mv.move(temp_files[0], output_path)
                     else:
-                        # Concat using ffmpeg concat demuxer
-                        import subprocess
-                        list_path = os.path.join(temp_dir, "list.txt")
-                        with open(list_path, "w", encoding="utf-8") as f:
-                            for fn in temp_files:
-                                f.write(f"file '{fn}'\n")
-
-                        ffmpeg_exe = _find_executable("ffmpeg")
-                        await asyncio.to_thread(subprocess.check_call, [ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", list_path, "-c", "copy", output_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        await asyncio.to_thread(join_mp3, temp_files, output_path)   # không bắt buộc ffmpeg
 
                     result = {
                         "status": "success",
